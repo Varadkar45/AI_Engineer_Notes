@@ -15676,7 +15676,7 @@ async def intercept_submits(page):
       }
     });
 
-    const top = unique.slice(0, 20);
+    const top = unique;
 
     searchStats.textContent = `${unique.length} match${unique.length !== 1 ? 'es' : ''} found`;
     searchStats.classList.add('visible');
