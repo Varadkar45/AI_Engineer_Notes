@@ -87,6 +87,80 @@
     border-left: 2px solid transparent;
     font-weight: 500;
   }
+  /* Search bar */
+  .search-box {
+    position: relative;
+    margin-bottom: 18px;
+  }
+  .search-box input {
+    width: 100%;
+    padding: 9px 12px 9px 34px;
+    border: 1.5px solid var(--line);
+    border-radius: 8px;
+    background: var(--paper);
+    font-family: inherit;
+    font-size: 0.85rem;
+    color: var(--ink);
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .search-box input:focus {
+    border-color: var(--ocean);
+    box-shadow: 0 0 0 3px rgba(74,131,221,0.12);
+  }
+  .search-box input::placeholder { color: var(--muted); }
+  .search-box .search-icon {
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--muted);
+    font-size: 0.85rem;
+    pointer-events: none;
+  }
+  .search-stats {
+    font-size: 0.72rem;
+    color: var(--muted);
+    margin-top: 6px;
+    display: none;
+  }
+  .search-stats.visible { display: block; }
+  .search-results-list {
+    max-height: 260px;
+    overflow-y: auto;
+    margin-top: 8px;
+    display: none;
+  }
+  .search-results-list.visible { display: block; }
+  .search-results-list a {
+    display: block;
+    padding: 6px 10px;
+    font-size: 0.8rem;
+    color: var(--ink-soft);
+    text-decoration: none;
+    border-radius: 6px;
+    margin-bottom: 2px;
+    border-left: 2px solid transparent;
+    line-height: 1.35;
+  }
+  .search-results-list a:hover {
+    background: var(--paper);
+    color: var(--ocean);
+    border-left-color: var(--ocean);
+  }
+  .search-results-list a .sr-context {
+    display: block;
+    font-size: 0.72rem;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+  mark.search-highlight {
+    background: var(--amber-soft);
+    color: var(--ink);
+    padding: 1px 2px;
+    border-radius: 3px;
+  }
+
   .sidebar nav a:hover {
     background: var(--paper);
     color: var(--ocean);
@@ -915,6 +989,14 @@
 <div class="layout">
   <aside class="sidebar">
     <div class="sidebar-title">AI Engineer<br/>Master Notes ✨</div>
+
+    <div class="search-box">
+      <span class="search-icon">🔍</span>
+      <input type="text" id="searchInput" placeholder="Search concepts, papers..." autocomplete="off" />
+      <div class="search-stats" id="searchStats"></div>
+      <div class="search-results-list" id="searchResults"></div>
+    </div>
+
     <div class="sidebar-sub">Sections</div>
     <nav>
       <a href="#s00-howto">📖 How to read this guide</a>
@@ -15485,6 +15567,175 @@ async def intercept_submits(page):
     });
   }, { rootMargin: '-20% 0px -70% 0px' });
   sections.forEach(s => obs.observe(s));
+
+  // ─── Search ───
+  const searchInput = document.getElementById('searchInput');
+  const searchStats = document.getElementById('searchStats');
+  const searchResults = document.getElementById('searchResults');
+  let searchTimeout = null;
+  let prevHighlights = [];
+
+  function clearHighlights() {
+    prevHighlights.forEach(mark => {
+      const parent = mark.parentNode;
+      parent.replaceChild(document.createTextNode(mark.textContent), mark);
+      parent.normalize();
+    });
+    prevHighlights = [];
+  }
+
+  function highlightText(node, regex) {
+    if (node.nodeType === 3) {
+      const match = node.textContent.match(regex);
+      if (match) {
+        const span = document.createElement('mark');
+        span.className = 'search-highlight';
+        const parts = node.textContent.split(regex);
+        const frag = document.createDocumentFragment();
+        parts.forEach((part, i) => {
+          frag.appendChild(document.createTextNode(part));
+          if (i < parts.length - 1) {
+            const m = span.cloneNode(false);
+            m.textContent = match[0];
+            frag.appendChild(m);
+            prevHighlights.push(m);
+          }
+        });
+        node.parentNode.replaceChild(frag, node);
+      }
+    } else if (node.nodeType === 1 && !/(script|style|mark)/i.test(node.tagName)) {
+      Array.from(node.childNodes).forEach(c => highlightText(c, regex));
+    }
+  }
+
+  function buildSearchIndex() {
+    const items = [];
+    document.querySelectorAll('main .section, main .subsection').forEach(sec => {
+      const heading = sec.querySelector('h2, h3');
+      if (!heading) return;
+      items.push({ el: sec, heading: heading.textContent, type: 'section', id: sec.id || '' });
+    });
+    document.querySelectorAll('.paper-card').forEach(card => {
+      const h4 = card.querySelector('.paper-head h4');
+      const def = card.querySelector('.paper-def');
+      if (!h4) return;
+      items.push({
+        el: card,
+        heading: h4.textContent,
+        context: def ? def.textContent : '',
+        type: 'paper',
+        id: card.closest('.subsection')?.id || ''
+      });
+    });
+    document.querySelectorAll('.term-card, .concept').forEach(card => {
+      const h4 = card.querySelector('h4');
+      if (!h4) return;
+      items.push({ el: card, heading: h4.textContent, type: 'concept', id: '' });
+    });
+    return items;
+  }
+
+  const searchIndex = buildSearchIndex();
+
+  function doSearch(query) {
+    clearHighlights();
+    searchResults.innerHTML = '';
+
+    if (!query || query.length < 2) {
+      searchStats.classList.remove('visible');
+      searchResults.classList.remove('visible');
+      return;
+    }
+
+    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(escaped, 'gi');
+    const matches = [];
+
+    searchIndex.forEach(item => {
+      const text = item.el.textContent;
+      const count = (text.match(regex) || []).length;
+      if (count > 0) {
+        matches.push({ ...item, count });
+      }
+    });
+
+    matches.sort((a, b) => {
+      const aHead = regex.test(a.heading) ? 1 : 0;
+      const bHead = regex.test(b.heading) ? 1 : 0;
+      if (bHead !== aHead) return bHead - aHead;
+      return b.count - a.count;
+    });
+
+    const unique = [];
+    const seen = new Set();
+    matches.forEach(m => {
+      const key = m.heading.slice(0, 60);
+      if (!seen.has(key)) {
+        seen.add(key);
+        unique.push(m);
+      }
+    });
+
+    const top = unique.slice(0, 20);
+
+    searchStats.textContent = `${unique.length} match${unique.length !== 1 ? 'es' : ''} found`;
+    searchStats.classList.add('visible');
+
+    if (top.length === 0) {
+      searchStats.textContent = 'No matches found';
+      searchResults.classList.remove('visible');
+      return;
+    }
+
+    searchResults.classList.add('visible');
+    top.forEach(m => {
+      const a = document.createElement('a');
+      a.href = '#';
+      const icon = m.type === 'paper' ? '📄' : m.type === 'concept' ? '💡' : '§';
+      let label = m.heading.length > 55 ? m.heading.slice(0, 52) + '...' : m.heading;
+      a.innerHTML = `${icon} ${label}`;
+      if (m.context) {
+        const ctx = document.createElement('span');
+        ctx.className = 'sr-context';
+        ctx.textContent = m.context.length > 70 ? m.context.slice(0, 67) + '...' : m.context;
+        a.appendChild(ctx);
+      }
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        clearHighlights();
+        m.el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        setTimeout(() => {
+          highlightText(m.el, new RegExp(escaped, 'gi'));
+        }, 400);
+      });
+      searchResults.appendChild(a);
+    });
+
+    // Also highlight in main content for the top result
+    highlightText(document.querySelector('main'), regex);
+  }
+
+  searchInput.addEventListener('input', () => {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => doSearch(searchInput.value.trim()), 200);
+  });
+
+  searchInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      searchInput.value = '';
+      doSearch('');
+      searchInput.blur();
+    }
+  });
+
+  // Keyboard shortcut: Ctrl+K or Cmd+K to focus search
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+      e.preventDefault();
+      searchInput.focus();
+      searchInput.select();
+    }
+  });
 </script>
 </body>
 </html>
