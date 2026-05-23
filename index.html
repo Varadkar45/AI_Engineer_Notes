@@ -56,7 +56,31 @@
     padding: 36px 18px;
     background: var(--bg-soft);
     border-right: 1px solid var(--line);
+    transition: margin-left 0.25s ease, opacity 0.25s ease;
   }
+  .layout.sidebar-hidden { display: block; }
+  .layout.sidebar-hidden .sidebar { display: none; }
+  .layout.sidebar-hidden main { max-width: none; }
+  .sidebar-toggle {
+    position: fixed;
+    top: 12px;
+    left: 268px;
+    z-index: 999;
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--paper);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.1rem;
+    color: var(--ink);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+    transition: background 0.15s, left 0.25s ease;
+  }
+  .sidebar-toggle:hover { background: var(--bg-soft); }
   .sidebar::-webkit-scrollbar { width: 6px; }
   .sidebar::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
   .sidebar-title {
@@ -985,6 +1009,8 @@
 </style>
 </head>
 <body>
+
+<button class="sidebar-toggle" id="sidebarToggle" title="Toggle sidebar">&lt;</button>
 
 <div class="layout">
   <aside class="sidebar">
@@ -3676,55 +3702,6 @@ Q · K_slept = (1·1)+(1·1)+(1·1)+(1·1) = 4</code></pre>
         </div>
 
         <div class="callout interview"><div class="label">🎤 Interview answer</div><p>"Attention is a mechanism used in Transformers that enables tokens to dynamically focus on the most relevant parts of the input sequence. It works by generating Query, Key, and Value vectors for each token and computing similarity scores between them to determine contextual relevance. Self-attention allows every token to attend to every other token, enabling strong long-range dependency modeling and parallel processing — which is why Transformers significantly outperformed RNN-based architectures. The formula is softmax(QKᵀ / √d_k) · V. One key production consideration is that attention complexity is O(n²) in sequence length, making long-context inference expensive."</p></div>
-      </div>
-
-        <div class="callout diagram"><div class="label">🧭 Worked example — attention on 3 tokens (small numbers, real math)</div>
-          <p>Say we have 3 tokens with these tiny 4-dim embeddings (in real models they'd be 512+ dim — same idea):</p>
-<pre data-lang="text"><code>"the"     → [<span class="tok-num">1</span>, <span class="tok-num">0</span>, <span class="tok-num">1</span>, <span class="tok-num">0</span>]
-"cat"     → [<span class="tok-num">0</span>, <span class="tok-num">2</span>, <span class="tok-num">0</span>, <span class="tok-num">2</span>]
-"slept"   → [<span class="tok-num">1</span>, <span class="tok-num">1</span>, <span class="tok-num">1</span>, <span class="tok-num">1</span>]</code></pre>
-
-          <p><strong>Step 1.</strong> Each token is multiplied by three learnable matrices <code>W_Q, W_K, W_V</code> to produce Query, Key, and Value vectors. (For simplicity assume those matrices are identity, so Q = K = V = the embedding itself.)</p>
-
-          <p><strong>Step 2.</strong> Pick a token to compute attention <em>for</em>. Let's pick <strong>"slept"</strong>. Its Query vector is <code>Q = [1,1,1,1]</code>.</p>
-
-          <p><strong>Step 3.</strong> Compute the dot product of <strong>Q ("slept")</strong> against the Key of every token (including itself):</p>
-<pre data-lang="text"><code>Q · K_the   = (<span class="tok-num">1</span>·<span class="tok-num">1</span>) + (<span class="tok-num">1</span>·<span class="tok-num">0</span>) + (<span class="tok-num">1</span>·<span class="tok-num">1</span>) + (<span class="tok-num">1</span>·<span class="tok-num">0</span>) = <span class="tok-num">2</span>
-Q · K_cat   = (<span class="tok-num">1</span>·<span class="tok-num">0</span>) + (<span class="tok-num">1</span>·<span class="tok-num">2</span>) + (<span class="tok-num">1</span>·<span class="tok-num">0</span>) + (<span class="tok-num">1</span>·<span class="tok-num">2</span>) = <span class="tok-num">4</span>
-Q · K_slept = (<span class="tok-num">1</span>·<span class="tok-num">1</span>) + (<span class="tok-num">1</span>·<span class="tok-num">1</span>) + (<span class="tok-num">1</span>·<span class="tok-num">1</span>) + (<span class="tok-num">1</span>·<span class="tok-num">1</span>) = <span class="tok-num">4</span></code></pre>
-          <p>Higher dot product = more "alignment" = more attention. "slept" wants to attend to "cat" and itself, less to "the".</p>
-
-          <p><strong>Step 4.</strong> Divide by <code>√d</code> (here √4 = 2) to keep numbers stable: <code>[1, 2, 2]</code>. (Without this scaling, large dot products push softmax into saturating regions and gradients die.)</p>
-
-          <p><strong>Step 5.</strong> Apply softmax to get attention weights that sum to 1:</p>
-<pre data-lang="text"><code>softmax([<span class="tok-num">1</span>, <span class="tok-num">2</span>, <span class="tok-num">2</span>]) = [e¹/(e¹+e²+e²), e²/(...), e²/(...)]
-                  ≈ [<span class="tok-num">0.16</span>, <span class="tok-num">0.42</span>, <span class="tok-num">0.42</span>]</code></pre>
-          <p>"slept" pays 42% attention to "cat", 42% to itself, only 16% to "the".</p>
-
-          <p><strong>Step 6.</strong> The new representation of "slept" is the weighted sum of all Value vectors:</p>
-<pre data-lang="text"><code>output_slept = <span class="tok-num">0.16</span> · V_the + <span class="tok-num">0.42</span> · V_cat + <span class="tok-num">0.42</span> · V_slept
-             = <span class="tok-num">0.16</span>·[<span class="tok-num">1</span>,<span class="tok-num">0</span>,<span class="tok-num">1</span>,<span class="tok-num">0</span>] + <span class="tok-num">0.42</span>·[<span class="tok-num">0</span>,<span class="tok-num">2</span>,<span class="tok-num">0</span>,<span class="tok-num">2</span>] + <span class="tok-num">0.42</span>·[<span class="tok-num">1</span>,<span class="tok-num">1</span>,<span class="tok-num">1</span>,<span class="tok-num">1</span>]
-             = [<span class="tok-num">0.58</span>, <span class="tok-num">1.26</span>, <span class="tok-num">0.58</span>, <span class="tok-num">1.26</span>]</code></pre>
-          <p>This new vector is <strong>"slept" enriched with information about its context</strong> — especially about "cat" (the subject) which it attended to most.</p>
-
-          <p style="margin-top:14px; color:var(--ink);"><strong>That's it.</strong> Repeat this in parallel for every token. That's one attention head. Stack ~96 layers × 64 heads of this and you get GPT-class behavior.</p>
-          <p style="margin-top:10px; padding: 8px 12px; border-left: 3px solid var(--coral); background: rgba(230,100,100,0.06); font-size:0.88rem;"><strong>⚠️ Training vs inference:</strong> This worked example shows <em>bidirectional</em> attention — "slept" attends to all tokens including future ones. This is how <strong>encoder models (BERT)</strong> and training work. During <strong>autoregressive inference</strong> (GPT, Claude), a <em>causal mask</em> blocks each token from seeing future tokens — "slept" could only attend to "the" and "cat", not to any token after it. The causal mask is what makes generation possible: the model can't cheat by looking at tokens it hasn't generated yet.</p>
-          <p style="margin-top:10px; color:var(--ink);"><strong>One important caveat:</strong> the worked example above used identity matrices for clarity. <em>In real transformers, W_Q, W_K, W_V are learned, separate, and different from the embedding</em>. They project the embedding into three different "views." That's the magic — one head can learn to track "subject-of-the-sentence," another can learn "next pronoun," another can learn "matching brackets." Multi-head attention runs N of these in parallel, and every layer has its <em>own</em> set of learned projection matrices. Without those learned projections, attention would just be cosine similarity on raw embeddings.</p>
-        </div>
-
-        <div class="callout note"><div class="label">🧠 Intuition recap — what Q, K, V mean</div>
-          <ul>
-            <li><strong>Query (Q)</strong>: "I am token X, what am I looking for?" — like a search query.</li>
-            <li><strong>Key (K)</strong>: "I am token Y, here's what I offer" — like a document's metadata.</li>
-            <li><strong>Value (V)</strong>: "If you decide I'm relevant, here's my actual content" — what gets mixed into the output.</li>
-            <li><strong>QKᵀ</strong>: how well each query matches each key (similarity scores).</li>
-            <li><strong>÷ √d</strong>: numerical stability — keeps softmax from saturating.</li>
-            <li><strong>softmax</strong>: turn raw scores into a probability distribution summing to 1.</li>
-            <li><strong>× V</strong>: weighted-sum the values you decided to attend to.</li>
-          </ul>
-        </div>
-
-        <div class="callout interview"><div class="label">🎤 Interview answer</div><p>"Attention computes a weighted sum of value vectors, where the weights come from softmax over the dot product of queries and keys, scaled by √d. Intuitively, each token's Query asks 'what should I look at?' and each token's Key answers 'this is what I offer'. High similarity gives high attention. The result is each token gets a representation enriched by the tokens it attended to most."</p></div>
       </div>
 
       <div class="subsection" id="s5-6">
@@ -19000,6 +18977,16 @@ async def intercept_submits(page):
       searchInput.focus();
       searchInput.select();
     }
+  });
+
+  // Sidebar toggle
+  const sidebarToggle = document.getElementById('sidebarToggle');
+  const layout = document.querySelector('.layout');
+  sidebarToggle.addEventListener('click', () => {
+    layout.classList.toggle('sidebar-hidden');
+    const hidden = layout.classList.contains('sidebar-hidden');
+    sidebarToggle.style.left = hidden ? '12px' : '268px';
+    sidebarToggle.textContent = hidden ? '>' : '<';
   });
 </script>
 </body>
